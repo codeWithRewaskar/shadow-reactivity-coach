@@ -35,15 +35,7 @@ Shadow is a single Markdown file ([`SKILL.md`](SKILL.md)). Pick your LLM below a
 4. Open **Project knowledge / Custom Instructions** and paste the contents
 5. Start a new chat inside the Project — Shadow is now your reactive-dog coach
 
-### ChatGPT (chat.openai.com)
-
-**Create a Custom GPT → paste into Instructions.**
-
-1. Copy the full contents of [`SKILL.md`](SKILL.md)
-2. Go to [chat.openai.com](https://chat.openai.com) → **Explore GPTs** → **Create**
-3. Switch to the **Configure** tab
-4. Name it "Shadow", paste the contents into the **Instructions** field
-5. Save (Only me / Anyone with link / Public — your call) and start chatting
+### ChatGPT (chat.openai.com) - https://chatgpt.com/g/g-6a10e840d2708191b532fabacd01e27f-shadow
 
 ### Cursor / Continue (IDE)
 
