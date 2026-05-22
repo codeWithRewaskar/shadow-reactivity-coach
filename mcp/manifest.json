@@ -1,0 +1,95 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json",
+  "schemaVersion": "v1",
+
+  "serverInfo": {
+    "name": "shadow-coach",
+    "displayName": "Shadow — Reactive Dog Training Coach",
+    "version": "2.1.0",
+    "description": "Force-free, evidence-based reactive dog coaching backed by live dog profiles, walk logs, and longitudinal progress analytics. Powered by Calming Paws.",
+    "longDescription": "Shadow is the AI coaching brain behind Calming Paws. In demo mode it answers breed-specific reactivity questions across 20 breed profiles and a three-type reactivity framework (fear / frustration / excitement). Authenticated users unlock a persistent dog profile, walk logging, trigger tracking, and personalised training protocol recommendations grounded in real walk data.",
+    "homepage": "https://calming-paws.com/",
+    "documentation": "https://calming-paws.com/install",
+    "support": "https://calming-paws.com/support",
+    "author": {
+      "name": "Saurabh Rewaskar",
+      "url": "https://calming-paws.com/"
+    },
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/codeWithRewaskar/shadow-reactivity-coach"
+    },
+    "license": "CC-BY-4.0",
+    "keywords": [
+      "dogs",
+      "reactive-dog",
+      "dog-training",
+      "force-free",
+      "positive-reinforcement",
+      "calming-paws"
+    ],
+    "icon": "https://calming-paws.com/icon-512.png"
+  },
+
+  "transport": {
+    "type": "streamable-http",
+    "url": "https://mcp.calming-paws.com/mcp"
+  },
+
+  "auth": {
+    "type": "oauth2",
+    "oauth2": {
+      "authorizationUrl": "https://calming-paws.com/oauth/authorize",
+      "tokenUrl": "https://calming-paws.com/oauth/token",
+      "scopes": [
+        "profile:read",
+        "walks:write",
+        "progress:read",
+        "protocols:read"
+      ],
+      "pkce": true,
+      "dynamicClientRegistration": true,
+      "protectedResourceMetadata": "https://mcp.calming-paws.com/.well-known/oauth-protected-resource",
+      "authorizationServerMetadata": "https://calming-paws.com/.well-known/oauth-authorization-server"
+    }
+  },
+
+  "capabilities": {
+    "tools": true,
+    "resources": false,
+    "prompts": false,
+    "sampling": false
+  },
+
+  "tools": [
+    {
+      "name": "lookup_breed",
+      "description": "Returns reactivity profile, common triggers, training nuances, and threshold notes for any of the 20 supported breeds. Available in demo mode — no auth required.",
+      "auth": false
+    },
+    {
+      "name": "get_dog_profile",
+      "description": "Retrieves the signed-in user's dog profile: breed, reactivity type, current threshold distance, active triggers, and training history summary.",
+      "auth": true,
+      "requiredScopes": ["profile:read"]
+    },
+    {
+      "name": "log_walk",
+      "description": "Logs a completed walk with date, duration, triggers encountered, reactions, and a freeform notes field. Feeds the progress analytics pipeline.",
+      "auth": true,
+      "requiredScopes": ["walks:write"]
+    },
+    {
+      "name": "get_progress",
+      "description": "Returns longitudinal progress data: threshold distance trend, reaction frequency over time, trigger stack history, and a cortisol-vacation flag if indicated.",
+      "auth": true,
+      "requiredScopes": ["progress:read"]
+    },
+    {
+      "name": "recommend_protocol",
+      "description": "Generates a personalised training protocol (DS/CC, LAT, Engage-Disengage, BAT 2.0, pattern games, or stationing) based on the dog's reactivity type, current walk data, and breed-specific nuances.",
+      "auth": true,
+      "requiredScopes": ["profile:read", "progress:read", "protocols:read"]
+    }
+  ]
+}
