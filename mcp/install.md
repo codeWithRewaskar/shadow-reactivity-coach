@@ -6,6 +6,14 @@ walks you take together, and surfaces longitudinal progress data so every coachi
 picks up exactly where the last one left off. The difference between pasting a prompt and
 having a coach who remembers.
 
+> ⚠️ **Scaffold status (v2.1.2):** the edge function in `mcp/edge-function/` is a
+> reference implementation. The five tool handlers (`lookup_breed`,
+> `get_dog_profile`, `log_walk`, `get_progress`, `recommend_protocol`) currently
+> return illustrative mock responses. Deployers must wire them to their own
+> Supabase tables (or other backend) before the server delivers real personalised
+> coaching. Auth, rate limiting, scope enforcement, Protected Resource Metadata,
+> and `WWW-Authenticate` discovery hints are production-shaped.
+
 ---
 
 ## Why MCP instead of the Markdown skill?

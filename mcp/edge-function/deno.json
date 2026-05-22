@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "dev": "supabase functions serve shadow-mcp --env-file .env.local",
+    "dev": "supabase functions serve shadow-coach --env-file .env.local",
     "test": "deno test --allow-env --allow-net"
   },
   "imports": {

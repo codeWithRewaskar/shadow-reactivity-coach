@@ -27,10 +27,10 @@ cp .env.example .env.local
 ### 2. Start the local function server
 
 ```bash
-supabase functions serve shadow-mcp --env-file .env.local
+supabase functions serve shadow-coach --env-file .env.local
 ```
 
-The function will be available at `http://localhost:54321/functions/v1/shadow-mcp`.
+The function will be available at `http://localhost:54321/functions/v1/shadow-coach`.
 
 ### 3. Run the test suite
 
@@ -53,7 +53,7 @@ deno task test
 #### 1. Initialize a session
 
 ```bash
-curl -s -D - -X POST http://localhost:54321/functions/v1/shadow-mcp \
+curl -s -D - -X POST http://localhost:54321/functions/v1/shadow-coach \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{
@@ -75,7 +75,7 @@ Copy the `Mcp-Session-Id` value from the response headers. Use it in all subsequ
 ```bash
 SESSION_ID="<paste session id here>"
 
-curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
+curl -s -X POST http://localhost:54321/functions/v1/shadow-coach \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -H "Mcp-Session-Id: $SESSION_ID" \
@@ -89,7 +89,7 @@ curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
 #### 3. Call `lookup_breed` (public, no auth needed)
 
 ```bash
-curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
+curl -s -X POST http://localhost:54321/functions/v1/shadow-coach \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -H "Mcp-Session-Id: $SESSION_ID" \
@@ -107,7 +107,7 @@ curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
 #### 4. Try an auth-required tool in demo mode (should return auth_required error)
 
 ```bash
-curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
+curl -s -X POST http://localhost:54321/functions/v1/shadow-coach \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -H "Mcp-Session-Id: $SESSION_ID" \
@@ -129,7 +129,7 @@ Expected: `{ "code": "auth_required", "message": "...", "cta": "https://calming-
 ```bash
 TOKEN="<supabase access token from your app>"
 
-curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
+curl -s -X POST http://localhost:54321/functions/v1/shadow-coach \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -148,7 +148,7 @@ curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
 ### Test the force-free guardrail
 
 ```bash
-curl -s -X POST http://localhost:54321/functions/v1/shadow-mcp \
+curl -s -X POST http://localhost:54321/functions/v1/shadow-coach \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -197,11 +197,11 @@ supabase secrets set BYO_JWT_SECRET="your-service-token-secret"
 ### Deploy
 
 ```bash
-supabase functions deploy shadow-mcp --project-ref <your-project-ref>
+supabase functions deploy shadow-coach --project-ref <your-project-ref>
 ```
 
 The function will be live at:
-`https://<project-ref>.supabase.co/functions/v1/shadow-mcp`
+`https://<project-ref>.supabase.co/functions/v1/shadow-coach`
 
 For production, configure a custom domain to point `mcp.calming-paws.com` at this URL.
 

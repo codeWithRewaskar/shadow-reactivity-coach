@@ -44,14 +44,25 @@ export const AUTH_REQUIRED_TOOLS = new Set([
   "recommend_protocol",
 ]);
 
-// Required scope by tool — OAuth path uses fine-grained scopes;
-// BYO JWT path only requires the broader "shadow:all" scope.
-export const OAUTH_TOOL_SCOPES: Record<string, string> = {
-  get_dog_profile: "shadow:read",
-  log_walk: "shadow:write",
-  get_progress: "shadow:read",
-  recommend_protocol: "shadow:read",
+// Required scope(s) by tool — OAuth path uses fine-grained scopes that
+// match `mcp/manifest.json` exactly. BYO JWT path accepts the broader
+// "shadow:all" wildcard or any of the per-tool scopes.
+//
+// Canonical scope vocabulary (single source of truth — keep in sync with
+// `mcp/manifest.json` and `mcp/oauth-flow.md`):
+//   - profile:read    → read dog profile data
+//   - walks:write     → create walk logs
+//   - progress:read   → read aggregated progress analytics
+//   - protocols:read  → read recommended training protocols
+export const OAUTH_TOOL_SCOPES: Record<string, string[]> = {
+  get_dog_profile: ["profile:read"],
+  log_walk: ["walks:write"],
+  get_progress: ["progress:read"],
+  recommend_protocol: ["profile:read", "progress:read", "protocols:read"],
 };
+
+// Wildcard scope accepted on the BYO JWT path (and as an OAuth override).
+export const WILDCARD_SCOPE = "shadow:all";
 
 // --- JWT helpers ---
 
@@ -101,7 +112,12 @@ async function verifyHS256(
     (c) => c.charCodeAt(0)
   );
 
-  const valid = await crypto.subtle.verify("HMAC", keyMaterial, sigBytes, data);
+  const valid = await crypto.subtle.verify(
+    "HMAC",
+    keyMaterial,
+    sigBytes as BufferSource,
+    data as BufferSource
+  );
   if (!valid) throw new Error("Invalid signature");
 
   return decodePayload(token);
@@ -109,13 +125,14 @@ async function verifyHS256(
 
 /**
  * Fetch JWKS and verify an RS256 or ES256 token using Web Crypto.
- * Caches the JWKS in module scope for the lifetime of the Edge Function
- * instance (ephemeral — each cold start re-fetches).
  *
- * NOTE: For production, back this with Supabase KV or a short-TTL cache
- * to avoid hammering the JWKS endpoint on every warm request.
+ * Cache strategy:
+ *   - Cached in module scope with a TTL (default 10 minutes, overridable via
+ *     JWKS_CACHE_TTL_SECONDS).
+ *   - On `kid` cache miss (key rotation), the cache is force-refreshed once
+ *     before giving up.
  */
-let jwksCache: { keys: JWK[] } | null = null;
+let jwksCache: { keys: JWK[]; expiresAt: number } | null = null;
 
 interface JWK {
   kid?: string;
@@ -129,11 +146,14 @@ interface JWK {
   crv?: string;
 }
 
-async function fetchJWKS(url: string): Promise<{ keys: JWK[] }> {
-  if (jwksCache) return jwksCache;
+async function fetchJWKS(url: string, force = false): Promise<{ keys: JWK[] }> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!force && jwksCache && jwksCache.expiresAt > nowSec) return jwksCache;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch JWKS: ${res.status}`);
-  jwksCache = (await res.json()) as { keys: JWK[] };
+  const ttl = parseInt(Deno.env.get("JWKS_CACHE_TTL_SECONDS") ?? "600", 10);
+  const body = (await res.json()) as { keys: JWK[] };
+  jwksCache = { keys: body.keys, expiresAt: nowSec + ttl };
   return jwksCache;
 }
 
@@ -145,8 +165,13 @@ async function verifyRS256OrES256(
   const alg = (header.alg as string) ?? "";
   const kid = header.kid as string | undefined;
 
-  const { keys } = await fetchJWKS(jwksUrl);
-  const jwk = kid ? keys.find((k) => k.kid === kid) : keys[0];
+  // First try cached JWKS; on kid miss, force-refresh once (key rotation).
+  let { keys } = await fetchJWKS(jwksUrl);
+  let jwk = kid ? keys.find((k) => k.kid === kid) : keys[0];
+  if (!jwk && kid) {
+    ({ keys } = await fetchJWKS(jwksUrl, true));
+    jwk = keys.find((k) => k.kid === kid);
+  }
   if (!jwk) throw new Error("No matching JWK found");
 
   let algorithm: RsaHashedImportParams | EcKeyImportParams;
@@ -177,16 +202,20 @@ async function verifyRS256OrES256(
 
   let valid: boolean;
   if (alg === "RS256") {
-    valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", cryptoKey, sigBytes, data);
+    valid = await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      cryptoKey,
+      sigBytes as BufferSource,
+      data as BufferSource
+    );
   } else {
     // ES256: the signature is DER-encoded; Web Crypto expects raw r||s (64 bytes).
-    // Convert DER to raw if needed.
     const rawSig = derToRaw(sigBytes);
     valid = await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       cryptoKey,
-      rawSig,
-      data
+      rawSig as BufferSource,
+      data as BufferSource
     );
   }
 
@@ -201,16 +230,29 @@ async function verifyRS256OrES256(
 function derToRaw(der: Uint8Array): Uint8Array {
   // If it's already 64 bytes, assume it's already raw
   if (der.length === 64) return der;
-  // Simple DER parse: 0x30 <len> 0x02 <rLen> <r> 0x02 <sLen> <s>
-  let offset = 2; // skip 0x30 and total length
+  if (der.length < 8 || der[0] !== 0x30) throw new Error("Invalid DER signature");
+
+  // Skip 0x30 + length. Length may be short-form (1 byte) or long-form
+  // (0x81/0x82 + N bytes).
+  let offset = 1;
+  if (der[offset] & 0x80) {
+    const lenBytes = der[offset] & 0x7f;
+    if (lenBytes < 1 || lenBytes > 2) throw new Error("Invalid DER length");
+    offset += 1 + lenBytes;
+  } else {
+    offset += 1;
+  }
+
   if (der[offset] !== 0x02) throw new Error("Invalid DER signature");
   offset++;
   const rLen = der[offset++];
+  if (offset + rLen > der.length) throw new Error("Invalid DER r length");
   const r = der.slice(offset, offset + rLen);
   offset += rLen;
   if (der[offset] !== 0x02) throw new Error("Invalid DER signature");
   offset++;
   const sLen = der[offset++];
+  if (offset + sLen > der.length) throw new Error("Invalid DER s length");
   const s = der.slice(offset, offset + sLen);
 
   // Pad or trim each component to 32 bytes
@@ -281,15 +323,13 @@ export async function resolveAuth(req: Request): Promise<AuthContext> {
   const header = decodeHeader(token);
   const alg = header.alg as string | undefined;
 
-  const allowedAud = Deno.env.get("ALLOWED_AUDIENCE") ?? "authenticated";
-  const allowedIss = Deno.env.get("ALLOWED_ISSUER") ?? "";
-
   // --- BYO JWT (HS256) path ---
   // If BYO_JWT_SECRET is set and the token uses HS256, try that path first.
+  // BYO tokens don't need ALLOWED_AUDIENCE / ALLOWED_ISSUER — they're verified
+  // by shared secret and identified by their own iss/sub semantics.
   const byoSecret = Deno.env.get("BYO_JWT_SECRET");
   if (byoSecret && alg === "HS256") {
     const payload = await verifyHS256(token, byoSecret);
-    // BYO tokens use a looser issuer check — the issuer claim is the service name
     const exp = payload.exp as number | undefined;
     if (exp !== undefined && Date.now() / 1000 > exp) {
       throw Object.assign(new Error("BYO JWT expired"), { code: "auth_expired" });
@@ -299,7 +339,22 @@ export async function resolveAuth(req: Request): Promise<AuthContext> {
     return { kind: "byojwt", user_id: sub, scopes: scope.split(" ") };
   }
 
-  // --- OAuth 2.1 path (RS256 / ES256 via JWKS, or HS256 via Supabase JWT secret) ---
+  // --- OAuth 2.1 path ---
+  // Fail-closed: require operators to set both ALLOWED_AUDIENCE and
+  // ALLOWED_ISSUER. The previous defaults ("authenticated" / "") meant any
+  // valid Supabase user JWT for any project was accepted as an MCP token —
+  // a classic confused-deputy hole (RFC 8707 §1).
+  const allowedAud = Deno.env.get("ALLOWED_AUDIENCE");
+  const allowedIss = Deno.env.get("ALLOWED_ISSUER");
+  if (!allowedAud || !allowedIss) {
+    throw Object.assign(
+      new Error(
+        "Server misconfigured: ALLOWED_AUDIENCE and ALLOWED_ISSUER env vars must be set"
+      ),
+      { code: "auth_invalid" }
+    );
+  }
+
   // Supabase Auth can issue HS256 tokens too — fall back to SUPABASE_JWT_SECRET.
   let payload: Record<string, unknown>;
 
@@ -353,10 +408,15 @@ export function checkToolAccess(
     };
   }
 
-  // BYO JWT: only needs the broad "shadow:all" scope
+  // BYO JWT: accepts the wildcard scope or any per-tool scope
   if (ctx.kind === "byojwt") {
     const scopes = ctx.scopes ?? [];
-    if (!scopes.includes("shadow:all") && !scopes.includes("shadow:write") && !scopes.includes("shadow:read")) {
+    const anyKnownScope =
+      scopes.includes(WILDCARD_SCOPE) ||
+      Object.values(OAUTH_TOOL_SCOPES).some((needed) =>
+        needed.some((s) => scopes.includes(s))
+      );
+    if (!anyKnownScope) {
       return {
         code: "scope_missing",
         message: `BYO JWT is missing required scope. Token has: [${scopes.join(", ")}]`,
@@ -365,14 +425,18 @@ export function checkToolAccess(
     return null;
   }
 
-  // OAuth: enforce per-tool scope
-  const requiredScope = OAUTH_TOOL_SCOPES[toolName];
-  if (requiredScope) {
+  // OAuth: enforce per-tool scope(s). All required scopes must be present
+  // (or the wildcard "shadow:all").
+  const required = OAUTH_TOOL_SCOPES[toolName] ?? [];
+  if (required.length > 0) {
     const scopes = ctx.scopes ?? [];
-    if (!scopes.includes(requiredScope) && !scopes.includes("shadow:all")) {
+    const hasAll =
+      scopes.includes(WILDCARD_SCOPE) ||
+      required.every((s) => scopes.includes(s));
+    if (!hasAll) {
       return {
         code: "scope_missing",
-        message: `This action requires the '${requiredScope}' scope. Re-authorise your Calming Paws connection to grant access.`,
+        message: `This action requires scope(s) [${required.join(", ")}]. Re-authorise your Calming Paws connection to grant access.`,
         cta: "https://calming-paws.com/settings/integrations",
       };
     }

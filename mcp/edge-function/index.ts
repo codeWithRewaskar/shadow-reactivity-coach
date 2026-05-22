@@ -282,8 +282,8 @@ async function handleInitialize(
   const result = {
     protocolVersion: "2025-03-26",
     serverInfo: {
-      name: "shadow-mcp",
-      version: "1.0.0",
+      name: "shadow-coach",
+      version: "2.1.0",
       description:
         "Shadow — Force-free reactive dog training coach, powered by Calming Paws (https://calming-paws.com/)",
     },
@@ -323,6 +323,26 @@ async function handleToolsCall(
 
 // --- Main request handler ---
 
+/** Canonical resource URI advertised in Protected Resource Metadata. */
+function getResourceUri(): string {
+  return Deno.env.get("MCP_RESOURCE_URI") ?? "https://mcp.calming-paws.com";
+}
+
+/** Authorization server(s) advertised in Protected Resource Metadata. */
+function getAuthorizationServers(): string[] {
+  const env = Deno.env.get("MCP_AUTH_SERVERS");
+  if (env) return env.split(",").map((s) => s.trim()).filter(Boolean);
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  if (supabaseUrl) return [`${supabaseUrl.replace(/\/+$/, "")}/auth/v1`];
+  return ["https://calming-paws.com"];
+}
+
+/** `WWW-Authenticate: Bearer ...` header per RFC 9728 §5.3. */
+function wwwAuthenticateHeader(): string {
+  const resource = getResourceUri();
+  return `Bearer resource_metadata="${resource}/.well-known/oauth-protected-resource"`;
+}
+
 async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const corsHeaders = buildCorsHeaders(req);
@@ -341,8 +361,47 @@ async function handleRequest(req: Request): Promise<Response> {
     );
   }
 
-  // GET — we don't offer a persistent SSE stream; return 405
+  // --- Protected Resource Metadata (RFC 9728) ---
+  // Required by MCP authorization spec. MUST be served by the resource
+  // server (this MCP) — not the authorization server.
+  if (
+    req.method === "GET" &&
+    url.pathname.endsWith("/.well-known/oauth-protected-resource")
+  ) {
+    return jsonResponse(
+      {
+        resource: getResourceUri(),
+        authorization_servers: getAuthorizationServers(),
+        scopes_supported: [
+          "profile:read",
+          "walks:write",
+          "progress:read",
+          "protocols:read",
+        ],
+        bearer_methods_supported: ["header"],
+        resource_documentation: "https://calming-paws.com/docs/mcp",
+      },
+      200,
+      corsHeaders
+    );
+  }
+
+  // GET — we don't offer a persistent SSE stream. Return 401 with
+  // WWW-Authenticate when the caller is unauthenticated so MCP clients
+  // can discover the Protected Resource Metadata document; otherwise 405.
   if (req.method === "GET") {
+    if (!req.headers.get("Authorization")) {
+      return new Response(
+        "Unauthorized — fetch /.well-known/oauth-protected-resource to discover the authorization server.",
+        {
+          status: 401,
+          headers: {
+            ...corsHeaders,
+            "WWW-Authenticate": wwwAuthenticateHeader(),
+          },
+        }
+      );
+    }
     return new Response("Method Not Allowed — this MCP server does not offer server-initiated SSE streams.", {
       status: 405,
       headers: { ...corsHeaders, Allow: "POST, DELETE, OPTIONS" },
@@ -448,15 +507,18 @@ async function handleRequest(req: Request): Promise<Response> {
         );
     }
   } catch (err: unknown) {
-    console.error("[shadow-mcp] Internal error:", err);
+    console.error("[shadow-coach] Internal error:", err);
 
     // Auth errors with known codes
     if (err instanceof Error && "code" in err) {
       const authErr = err as Error & { code: string };
       if (authErr.code === "auth_expired") {
         responseBody = rpcError(rpcReq.id ?? null, RPC_INVALID_PARAMS, "Token expired. Re-authenticate and try again.");
+        // Surface the Protected Resource Metadata discovery hint so clients can refresh.
+        responseHeaders["WWW-Authenticate"] = wwwAuthenticateHeader();
       } else if (authErr.code === "auth_invalid") {
         responseBody = rpcError(rpcReq.id ?? null, RPC_INVALID_PARAMS, `Auth error: ${err.message}`);
+        responseHeaders["WWW-Authenticate"] = wwwAuthenticateHeader();
       } else {
         responseBody = rpcError(rpcReq.id ?? null, RPC_INTERNAL_ERROR, "Internal server error");
       }

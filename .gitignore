@@ -1,0 +1,20 @@
+# Private launch / strategy docs — do not commit
+LAUNCH_PLAYBOOK.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Node / build artifacts (if MCP server grows)
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.local

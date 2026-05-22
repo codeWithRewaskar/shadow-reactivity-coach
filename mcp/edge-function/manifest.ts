@@ -43,7 +43,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "get_dog_profile",
     description:
-      "Retrieve the stored profile for a specific dog, including breed, reactivity type, primary triggers, known threshold distance, current risk level, and active training protocols. Requires authentication — the caller must have a valid Calming Paws session token with at least the 'shadow:read' scope.",
+      "Retrieve the stored profile for a specific dog, including breed, reactivity type, primary triggers, known threshold distance, current risk level, and active training protocols. Requires authentication — the caller must have a valid Calming Paws session token with at least the 'profile:read' scope.",
     inputSchema: {
       type: "object",
       properties: {
@@ -61,7 +61,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "log_walk",
     description:
-      "Log a walk session for a dog, recording the triggers encountered, the reactivity threshold score (1–5), and any session notes. Returns a confirmation with a personalised coaching note interpreting the session. Requires authentication with 'shadow:write' scope. Will refuse (with a helpful redirect) if notes mention aversive methods.",
+      "Log a walk session for a dog, recording the triggers encountered, the reactivity threshold score (1–5), and any session notes. Returns a confirmation with a personalised coaching note interpreting the session. Requires authentication with 'walks:write' scope. Will refuse (with a helpful redirect) if notes mention aversive methods.",
     inputSchema: {
       type: "object",
       properties: {
@@ -100,7 +100,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "get_progress",
     description:
-      "Retrieve trend data and progress analytics for a dog over a given time window (7, 30, or 90 days). Returns average threshold scores, trend direction, threshold distance change, most challenging triggers, and a week-by-week breakdown. Includes a coaching note interpreting the trend. Requires authentication with 'shadow:read' scope.",
+      "Retrieve trend data and progress analytics for a dog over a given time window (7, 30, or 90 days). Returns average threshold scores, trend direction, threshold distance change, most challenging triggers, and a week-by-week breakdown. Includes a coaching note interpreting the trend. Requires authentication with 'progress:read' scope.",
     inputSchema: {
       type: "object",
       properties: {
@@ -123,7 +123,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "recommend_protocol",
     description:
-      "Generate a personalised force-free training protocol for a specific dog and situation. The tool identifies the reactivity type (fear-based, frustration-based, excitement-based, or mixed) from the situation description and returns a structured protocol with step-by-step session plans, equipment recommendations, green/red flags, and a coaching note in Shadow's voice. Requires authentication with 'shadow:read' scope. Will refuse (with a helpful redirect) if the situation mentions aversive methods.",
+      "Generate a personalised force-free training protocol for a specific dog and situation. The tool identifies the reactivity type (fear-based, frustration-based, excitement-based, or mixed) from the situation description and returns a structured protocol with step-by-step session plans, equipment recommendations, green/red flags, and a coaching note in Shadow's voice. Requires authentication with the 'profile:read', 'progress:read', and 'protocols:read' scopes. Will refuse (with a helpful redirect) if the situation mentions aversive methods.",
     inputSchema: {
       type: "object",
       properties: {

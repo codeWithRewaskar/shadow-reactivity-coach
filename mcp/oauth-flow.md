@@ -1,7 +1,7 @@
 # Shadow MCP Server — OAuth Authentication Spec
 
 **Document version:** 1.0  
-**MCP spec targeted:** [2025-06-18](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization)  
+**MCP spec targeted:** [2025-03-26](https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization)
 **OAuth draft targeted:** [draft-ietf-oauth-v2-1-13](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13)  
 **Backend assumption:** Calming Paws is built on [Supabase](https://supabase.com/), which provides a compliant OAuth 2.1 authorization server, JWKS endpoint, dynamic client registration, and RS256/ES256 JWT issuance out of the box. Supabase's auth base URL for the project is `https://<project-ref>.supabase.co/auth/v1`. All references below to the authorization server point at that base URL. If the backend is ever migrated off Supabase, every endpoint listed here must be re-verified; the trust model does not change, only the host.
 
@@ -46,7 +46,7 @@ Mode detection order:
 
 ### 2.1 MCP Server — Protected Resource Metadata
 
-The MCP server (`mcp.calming-paws.com`) itself exposes two endpoints required by the 2025-06-18 spec.
+The MCP server (`mcp.calming-paws.com`) itself exposes two endpoints required by the 2025-03-26 spec.
 
 #### `GET /.well-known/oauth-protected-resource`
 
@@ -64,10 +64,10 @@ Required by RFC 9728. Served by the MCP server (not the authorization server). T
     "openid",
     "profile",
     "email",
-    "dogs:read",
+    "profile:read",
     "walks:write",
     "progress:read",
-    "coaching:read"
+    "protocols:read"
   ],
   "bearer_methods_supported": ["header"],
   "resource_documentation": "https://calming-paws.com/docs/mcp"
@@ -113,7 +113,7 @@ Full URL: `https://<project-ref>.supabase.co/.well-known/oauth-authorization-ser
   "userinfo_endpoint": "https://<project-ref>.supabase.co/auth/v1/oauth/userinfo",
   "scopes_supported": [
     "openid", "profile", "email",
-    "dogs:read", "walks:write", "progress:read", "coaching:read"
+    "profile:read", "walks:write", "progress:read", "protocols:read"
   ],
   "response_types_supported": ["code"],
   "grant_types_supported": ["authorization_code", "refresh_token"],
@@ -147,7 +147,7 @@ Content-Type: application/json
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
   "token_endpoint_auth_method": "none",
-  "scope": "openid profile email dogs:read walks:write progress:read coaching:read",
+  "scope": "openid profile email profile:read walks:write progress:read protocols:read",
   "application_type": "native"
 }
 ```
@@ -163,7 +163,7 @@ Content-Type: application/json
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
   "token_endpoint_auth_method": "none",
-  "scope": "openid profile email dogs:read walks:write progress:read coaching:read",
+  "scope": "openid profile email profile:read walks:write progress:read protocols:read",
   "registration_access_token": "rat_XXXXXXXXXXXXXXXX",
   "registration_client_uri": "https://<project-ref>.supabase.co/auth/v1/oauth/register/cpa_XXXXXXXXXXXXXXXX"
 }
@@ -259,7 +259,7 @@ grant_type=authorization_code
   "token_type": "Bearer",
   "expires_in": 900,
   "refresh_token": "rt_XXXXXXXXXXXXXXXX",
-  "scope": "openid profile email dogs:read walks:write progress:read coaching:read",
+  "scope": "openid profile email profile:read walks:write progress:read protocols:read",
   "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImtleS0xIn0..."
 }
 ```
@@ -284,7 +284,7 @@ grant_type=refresh_token
   "token_type": "Bearer",
   "expires_in": 900,
   "refresh_token": "rt_YYYYYYYYYYYYYYYY",
-  "scope": "openid profile email dogs:read walks:write progress:read coaching:read"
+  "scope": "openid profile email profile:read walks:write progress:read protocols:read"
 }
 ```
 
@@ -371,10 +371,10 @@ The MCP server should not call this endpoint on every request; user metadata sho
 | Scope | Maps to tool(s) | Human-readable label on consent screen | Auth required |
 |-------|----------------|----------------------------------------|---------------|
 | *(none)* | `lookup_breed` | — (no auth, demo mode) | No |
-| `dogs:read` | `get_dog_profile` | "Read your dog's profile, breed, and reactivity history" | Yes |
+| `profile:read` | `get_dog_profile` | "Read your dog's profile, breed, and reactivity history" | Yes |
 | `walks:write` | `log_walk` | "Log walks and trigger events on your behalf" | Yes |
 | `progress:read` | `get_progress` | "Read your training progress and session history" | Yes |
-| `coaching:read` | `recommend_protocol` | "Generate personalised training protocol recommendations" | Yes |
+| `protocols:read` | `recommend_protocol` | "Generate personalised training protocol recommendations" | Yes |
 | `openid` | (OIDC — token identity) | Implicit, not shown separately | Yes |
 | `profile` | (OIDC — name, picture) | "Read your basic profile information" | Yes |
 | `email` | (OIDC — email address) | "Read your email address" | Yes |
@@ -384,7 +384,7 @@ The MCP server should not call this endpoint on every request; user metadata sho
 The default OAuth request includes all Shadow-specific scopes bundled together:
 
 ```
-openid profile email dogs:read walks:write progress:read coaching:read
+openid profile email profile:read walks:write progress:read protocols:read
 ```
 
 Rationale: Shadow is a coaching app — a user who connects Shadow to Claude Desktop almost certainly wants the full coaching experience. Fragmenting consent across five separate browser redirects would be a poor UX with no meaningful security benefit. All scopes are shown on a single consent screen with clear descriptions.
@@ -399,9 +399,9 @@ Every tool call is gated by a middleware check before handler execution:
 
 ```
 Tool: get_dog_profile
-Required scope: dogs:read
-Check: parsed_token.scopes.includes("dogs:read")
-On failure: HTTP 403, body: {"error": "insufficient_scope", "required": "dogs:read"}
+Required scope: profile:read
+Check: parsed_token.scopes.includes("profile:read")
+On failure: HTTP 403, body: {"error": "insufficient_scope", "required": "profile:read"}
 ```
 
 The scope list in the access token is authoritative. Never infer scopes from the user's plan tier alone.
@@ -436,7 +436,7 @@ sequenceDiagram
 
     Note over CD,Browser: Step 4 — Authorization request
     CD->>CD: Generate code_verifier (128-bit random)\nCompute code_challenge = BASE64URL(SHA256(verifier))\nGenerate state (128-bit random)\nStore verifier + state locally
-    CD->>Browser: Open system browser to /auth/v1/oauth/authorize\n?response_type=code&client_id=cpa_XXX\n&redirect_uri=...&scope=openid+profile+email+dogs:read+walks:write+progress:read+coaching:read\n&state=abc123&code_challenge=E9M...&code_challenge_method=S256\n&resource=https://mcp.calming-paws.com
+    CD->>Browser: Open system browser to /auth/v1/oauth/authorize\n?response_type=code&client_id=cpa_XXX\n&redirect_uri=...&scope=openid+profile+email+profile:read+walks:write+progress:read+protocols:read\n&state=abc123&code_challenge=E9M...&code_challenge_method=S256\n&resource=https://mcp.calming-paws.com
 
     Note over Browser,AS: Step 5 — User authentication and consent
     Browser->>AS: GET /auth/v1/oauth/authorize (all params above)
@@ -456,7 +456,7 @@ sequenceDiagram
     CD->>MCP: POST /mcp\nAuthorization: Bearer eyJ...\n{ "method": "tools/call", "params": { "name": "get_dog_profile", "arguments": {...} } }
 
     Note over MCP: Step 8 — Token validation (server-side)
-    MCP->>MCP: 1. Decode JWT header → read kid\n2. Fetch JWKS (cached), find key by kid\n3. Verify RS256 signature\n4. Check iss == Supabase issuer\n5. Check aud contains "https://mcp.calming-paws.com"\n6. Check exp > now\n7. Check scope contains "dogs:read"\n8. Check subscription tier allows tool (see §8)
+    MCP->>MCP: 1. Decode JWT header → read kid\n2. Fetch JWKS (cached), find key by kid\n3. Verify RS256 signature\n4. Check iss == Supabase issuer\n5. Check aud contains "https://mcp.calming-paws.com"\n6. Check exp > now\n7. Check scope contains "profile:read"\n8. Check subscription tier allows tool (see §8)
     MCP-->>CD: 200 OK\n{ "result": { "dog": { "name": "Koda", "breed": "Australian Shepherd", ... } } }
 
     Note over CD,AS: Step 9 — Silent token refresh (when access token nears expiry)
@@ -526,7 +526,7 @@ Power users (Claude Code developers, teams building on top of Shadow's MCP API) 
 Users navigate to `https://calming-paws.com/settings/api-keys` and click "Generate MCP Token." The backend:
 
 1. Creates a JWT signed with the Calming Paws private key (RS256, separate key pair from the Supabase OAuth key — see §6.4 on distinguishing tokens).
-2. Embeds all Shadow scopes by default: `dogs:read walks:write progress:read coaching:read`.
+2. Embeds all Shadow scopes by default: `profile:read walks:write progress:read protocols:read`.
 3. Sets `iss: "https://calming-paws.com"`, `aud: "https://mcp.calming-paws.com"`, `token_type: "service"`, and `sub: <user_uuid>`.
 4. Sets `exp` to 90 days from issuance.
 5. Returns the JWT to the user exactly once. The JWT is not stored server-side in recoverable form — only a hash is stored for revocation checks.
@@ -541,7 +541,7 @@ Users navigate to `https://calming-paws.com/settings/api-keys` and click "Genera
   "iat": 1748000000,
   "exp": 1755776000,
   "token_type": "service",
-  "scope": "dogs:read walks:write progress:read coaching:read",
+  "scope": "profile:read walks:write progress:read protocols:read",
   "plan": "pro",
   "key_id": "cpk_XXXXXXXXXXXXXXXX"
 }
@@ -824,7 +824,7 @@ The JWT library used by the MCP server must:
   "aud": "https://mcp.calming-paws.com",
   "iat": 1748000000,
   "exp": 1748000900,
-  "scope": "openid profile email dogs:read walks:write progress:read coaching:read",
+  "scope": "openid profile email profile:read walks:write progress:read protocols:read",
   "client_id": "cpa_XXXXXXXXXXXXXXXX",
   "amr": [{"method": "pwd", "timestamp": 1748000000}]
 }
@@ -840,7 +840,7 @@ The JWT library used by the MCP server must:
   "iat": 1748000000,
   "exp": 1755776000,
   "token_type": "service",
-  "scope": "dogs:read walks:write progress:read coaching:read",
+  "scope": "profile:read walks:write progress:read protocols:read",
   "plan": "pro",
   "key_id": "cpk_XXXXXXXXXXXXXXXX"
 }
@@ -911,7 +911,7 @@ def check_subscription(claims: TokenClaims, tool_name: str):
 
 ## Appendix C — References
 
-- MCP Authorization Spec 2025-06-18: https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization
+- MCP Authorization Spec 2025-03-26: https://modelcontextprotocol.io/specification/2025-03-26/basic/authorization
 - OAuth 2.1 Draft: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13
 - RFC 8414 — Authorization Server Metadata: https://datatracker.ietf.org/doc/html/rfc8414
 - RFC 7591 — Dynamic Client Registration: https://datatracker.ietf.org/doc/html/rfc7591
