@@ -23,31 +23,50 @@ Shadow was created for [Calming Paws](https://github.com/codeWithRewaskar/calmin
 
 ## Install
 
-### Claude (Projects or Custom Instructions)
+Shadow is a single Markdown file ([`SKILL.md`](SKILL.md)). Pick your LLM below and paste it in.
 
-1. Copy the contents of [`SKILL.md`](SKILL.md)
-2. Go to [claude.ai](https://claude.ai) and create a new Project
-3. Paste the contents into the Project Instructions
-4. Start chatting about your reactive dog
+### Claude (claude.ai)
 
-### ChatGPT (Custom GPT or System Prompt)
+**Create a Project → paste contents into Custom Instructions.**
 
-1. Copy the contents of [`SKILL.md`](SKILL.md)
-2. Go to [chat.openai.com](https://chat.openai.com) > Explore GPTs > Create
-3. Paste into the **Instructions** field
-4. Name it "Shadow" and save
+1. Copy the full contents of [`SKILL.md`](SKILL.md)
+2. Go to [claude.ai](https://claude.ai) → **Projects** → **Create project**
+3. Name it "Shadow" (or whatever you'd like)
+4. Open **Project knowledge / Custom Instructions** and paste the contents
+5. Start a new chat inside the Project — Shadow is now your reactive-dog coach
 
-### Claude Code (MCP Skill)
+### ChatGPT (chat.openai.com)
 
-1. Clone this repo:
+**Create a Custom GPT → paste into Instructions.**
+
+1. Copy the full contents of [`SKILL.md`](SKILL.md)
+2. Go to [chat.openai.com](https://chat.openai.com) → **Explore GPTs** → **Create**
+3. Switch to the **Configure** tab
+4. Name it "Shadow", paste the contents into the **Instructions** field
+5. Save (Only me / Anyone with link / Public — your call) and start chatting
+
+### Cursor / Continue (IDE)
+
+**Add to `.cursorrules` (Cursor) or `.continuerules` / config (Continue).**
+
+1. Clone or download this repo
+2. Copy [`SKILL.md`](SKILL.md) into your project root as `.cursorrules` (Cursor) or append it to your Continue config's `systemMessage`
    ```bash
-   git clone https://github.com/codeWithRewaskar/shadow-reactivity-coach.git
+   # Cursor
+   cp shadow-reactivity-coach/SKILL.md /path/to/your/project/.cursorrules
+
+   # Continue — add to ~/.continue/config.json under "systemMessage"
    ```
-2. In your Claude Code project, reference the skill:
-   ```bash
-   # Copy SKILL.md into your project's skills directory
-   cp shadow-reactivity-coach/SKILL.md .claude/skills/shadow-reactive-coach.md
-   ```
+3. Restart the IDE so the new rules load
+4. Shadow's guidance now travels with that workspace
+
+### Claude Code (Skills directory)
+
+```bash
+git clone https://github.com/codeWithRewaskar/shadow-reactivity-coach.git
+mkdir -p .claude/skills
+cp shadow-reactivity-coach/SKILL.md .claude/skills/shadow-reactive-coach.md
+```
 
 ## Examples
 
@@ -98,3 +117,9 @@ Contributions welcome! If you'd like to:
 [CC-BY-4.0](LICENSE) — free to use, share, and adapt with attribution.
 
 Built by [Saurabh Rewaskar](https://github.com/codeWithRewaskar) as part of [Calming Paws](https://github.com/codeWithRewaskar/calming-paws).
+
+---
+
+### 🐾 Powered by [Calming Paws](https://calming-paws.com/)
+
+Shadow is the open-source coaching brain behind **[Calming Paws](https://calming-paws.com/)** — the full reactive-dog companion app with **live dog profiles, walk logs, trigger tracking, and progress analytics** built right in. If you'd like the complete experience (not just the LLM prompt), head to **[calming-paws.com](https://calming-paws.com/)**.
