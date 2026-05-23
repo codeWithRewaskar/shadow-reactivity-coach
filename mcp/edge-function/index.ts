@@ -10,8 +10,16 @@
  *             when the client Accept header includes it. This scaffold always
  *             responds with application/json (no long-running streams needed
  *             for these tools).
- *   GET  /  — Returns HTTP 405 (this server has no server-initiated streams).
+ *   GET  /  — Returns HTTP 405 (this server has no server-initiated streams),
+ *             or HTTP 401 with WWW-Authenticate when unauthenticated, so
+ *             MCP clients can discover the Protected Resource Metadata.
  *   DELETE / — Terminates the session (responds 200, clears session state).
+ *   GET /.well-known/oauth-protected-resource — RFC 9728 discovery doc.
+ *
+ * Routing: a small zero-dep routes table (`ROUTES`) replaces ad-hoc `if`
+ * ladders. Match precedence is in declaration order. Path matching is
+ * tail-anchored (`endsWith` / exact-equal) so that Supabase's
+ * `/functions/v1/shadow-coach` prefix and a bare-domain mount both work.
  *
  * Session management: optional Mcp-Session-Id header. We assign a session ID
  * on InitializeResult and require it on subsequent requests.
@@ -27,6 +35,8 @@
 import { resolveAuth, checkToolAccess } from "./auth.ts";
 import { checkRateLimit, getClientIP } from "./ratelimit.ts";
 import { buildToolsList } from "./manifest.ts";
+import { RESOURCE_LIST, readResource } from "./resources.ts";
+import { kv, type Session } from "./kv.ts";
 
 // Tool handlers
 import { LookupBreedParamsSchema, lookupBreed } from "./tools/lookup_breed.ts";
@@ -70,15 +80,15 @@ const RPC_INVALID_PARAMS = -32602;
 const RPC_INTERNAL_ERROR = -32603;
 
 // --- Session management ---
-// Lightweight in-memory session store (ephemeral — resets on cold start).
-// TODO (production): Replace with Supabase KV or Upstash Redis for
-// cross-instance session sharing.
+// Session storage is delegated to the KvStore abstraction in `./kv.ts`,
+// which uses Deno KV when available and falls back to an in-memory Map
+// (per-instance, resets on cold start) on runtimes where Deno KV is
+// disabled — e.g. some Supabase Edge Function deployments.
+//
+// The `Session` type is imported from `./kv.ts` so the storage layer and
+// callers stay in sync.
 
-interface Session {
-  created_at: number;
-  user_id?: string;
-}
-const sessions = new Map<string, Session>();
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function generateSessionId(): string {
   // Cryptographically secure random session ID (URL-safe base64)
@@ -105,7 +115,7 @@ function buildCorsHeaders(req: Request): Record<string, string> {
     "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
     "Access-Control-Allow-Headers":
-      "Content-Type, Authorization, Mcp-Session-Id, Accept",
+      "Content-Type, Authorization, Mcp-Session-Id, Accept, MCP-Protocol-Version",
     "Access-Control-Expose-Headers": "Mcp-Session-Id",
   };
 }
@@ -189,7 +199,7 @@ async function dispatchToolCall(
   // Rate limiting
   const rateLimitKind = ctx.kind === "demo" ? "demo" : "auth";
   const rateLimitKey = ctx.kind === "demo" ? getClientIP(req) : (ctx.user_id ?? "unknown");
-  const rl = checkRateLimit(rateLimitKind, rateLimitKey);
+  const rl = await checkRateLimit(rateLimitKind, rateLimitKey);
   if (!rl.allowed) {
     return {
       content: [
@@ -277,21 +287,24 @@ async function handleInitialize(
   req: JsonRpcRequest
 ): Promise<{ response: JsonRpcSuccess; sessionId: string }> {
   const sessionId = generateSessionId();
-  sessions.set(sessionId, { created_at: Date.now() });
+  const session: Session = { created_at: Date.now() };
+  await (await kv).setSession(sessionId, session, SESSION_TTL_MS);
 
   const result = {
     protocolVersion: "2025-03-26",
     serverInfo: {
       name: "shadow-coach",
-      version: "2.1.0",
+      version: "2.1.5",
       description:
         "Shadow — Force-free reactive dog training coach, powered by Calming Paws (https://calming-paws.com/)",
     },
     capabilities: {
-      tools: {
-        // We don't dynamically change the tool list, but we declare it for spec compliance.
-        listChanged: false,
-      },
+      // We don't dynamically change the tool list, but we declare it for spec compliance.
+      tools: { listChanged: false },
+      // resources/list + resources/read are supported (see ./resources.ts).
+      // We don't push notifications for resource updates and don't accept
+      // subscriptions, so both flags are false.
+      resources: { subscribe: false, listChanged: false },
     },
   };
 
@@ -321,7 +334,28 @@ async function handleToolsCall(
   return rpcSuccess(req.id ?? null, result);
 }
 
-// --- Main request handler ---
+function handleResourcesList(req: JsonRpcRequest): JsonRpcSuccess {
+  return rpcSuccess(req.id ?? null, { resources: RESOURCE_LIST });
+}
+
+function handleResourcesRead(req: JsonRpcRequest): JsonRpcResponse {
+  const params = req.params as Record<string, unknown> | undefined;
+  const uri = typeof params?.uri === "string" ? params.uri : undefined;
+
+  if (!uri) {
+    return rpcError(req.id ?? null, RPC_INVALID_PARAMS, "Missing required parameter: uri");
+  }
+
+  const result = readResource(uri);
+  if (!result) {
+    return rpcError(req.id ?? null, RPC_INVALID_PARAMS, `Unknown resource URI: ${uri}`);
+  }
+
+  // MCP spec: resources/read returns { contents: ResourceContents[] }.
+  return rpcSuccess(req.id ?? null, { contents: [result] });
+}
+
+// --- Discovery / metadata ---
 
 /** Canonical resource URI advertised in Protected Resource Metadata. */
 function getResourceUri(): string {
@@ -343,84 +377,76 @@ function wwwAuthenticateHeader(): string {
   return `Bearer resource_metadata="${resource}/.well-known/oauth-protected-resource"`;
 }
 
-async function handleRequest(req: Request): Promise<Response> {
-  const url = new URL(req.url);
+// --- Route handlers ---
+
+type RouteHandler = (req: Request, url: URL) => Promise<Response> | Response;
+
+/**
+ * GET /.well-known/oauth-protected-resource — RFC 9728 discovery doc.
+ * Required by the MCP authorization spec. MUST be served by the resource
+ * server (this MCP) — not the authorization server.
+ */
+function handleProtectedResourceMetadata(req: Request, _url: URL): Response {
   const corsHeaders = buildCorsHeaders(req);
+  return jsonResponse(
+    {
+      resource: getResourceUri(),
+      authorization_servers: getAuthorizationServers(),
+      scopes_supported: [
+        "profile:read",
+        "walks:write",
+        "progress:read",
+        "protocols:read",
+      ],
+      bearer_methods_supported: ["header"],
+      resource_documentation: "https://calming-paws.com/docs/mcp",
+    },
+    200,
+    corsHeaders
+  );
+}
 
-  // Preflight
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
-  }
+/** CORS preflight — short-circuits before auth / origin checks. */
+function handleCorsPreflight(req: Request, _url: URL): Response {
+  return new Response(null, { status: 204, headers: buildCorsHeaders(req) });
+}
 
-  // DNS rebinding protection (MCP spec security requirement)
-  if (!isOriginAllowed(req)) {
-    return jsonResponse(
-      { error: "Origin not allowed" },
-      403,
-      corsHeaders
-    );
-  }
-
-  // --- Protected Resource Metadata (RFC 9728) ---
-  // Required by MCP authorization spec. MUST be served by the resource
-  // server (this MCP) — not the authorization server.
-  if (
-    req.method === "GET" &&
-    url.pathname.endsWith("/.well-known/oauth-protected-resource")
-  ) {
-    return jsonResponse(
+/**
+ * GET on the MCP root — return 405 (no server-initiated SSE), or 401 with
+ * WWW-Authenticate when unauthenticated so MCP clients can discover the
+ * Protected Resource Metadata document.
+ */
+function handleMcpGet(req: Request, _url: URL): Response {
+  const corsHeaders = buildCorsHeaders(req);
+  if (!req.headers.get("Authorization")) {
+    return new Response(
+      "Unauthorized — fetch /.well-known/oauth-protected-resource to discover the authorization server.",
       {
-        resource: getResourceUri(),
-        authorization_servers: getAuthorizationServers(),
-        scopes_supported: [
-          "profile:read",
-          "walks:write",
-          "progress:read",
-          "protocols:read",
-        ],
-        bearer_methods_supported: ["header"],
-        resource_documentation: "https://calming-paws.com/docs/mcp",
-      },
-      200,
-      corsHeaders
+        status: 401,
+        headers: {
+          ...corsHeaders,
+          "WWW-Authenticate": wwwAuthenticateHeader(),
+        },
+      }
     );
   }
+  return new Response("Method Not Allowed — this MCP server does not offer server-initiated SSE streams.", {
+    status: 405,
+    headers: { ...corsHeaders, Allow: "POST, DELETE, OPTIONS" },
+  });
+}
 
-  // GET — we don't offer a persistent SSE stream. Return 401 with
-  // WWW-Authenticate when the caller is unauthenticated so MCP clients
-  // can discover the Protected Resource Metadata document; otherwise 405.
-  if (req.method === "GET") {
-    if (!req.headers.get("Authorization")) {
-      return new Response(
-        "Unauthorized — fetch /.well-known/oauth-protected-resource to discover the authorization server.",
-        {
-          status: 401,
-          headers: {
-            ...corsHeaders,
-            "WWW-Authenticate": wwwAuthenticateHeader(),
-          },
-        }
-      );
-    }
-    return new Response("Method Not Allowed — this MCP server does not offer server-initiated SSE streams.", {
-      status: 405,
-      headers: { ...corsHeaders, Allow: "POST, DELETE, OPTIONS" },
-    });
-  }
+/** DELETE — terminate the session. Spec-defined transport teardown. */
+async function handleMcpDelete(req: Request, _url: URL): Promise<Response> {
+  const corsHeaders = buildCorsHeaders(req);
+  const sessionId = req.headers.get("Mcp-Session-Id");
+  if (sessionId) await (await kv).deleteSession(sessionId);
+  return new Response(null, { status: 200, headers: corsHeaders });
+}
 
-  // DELETE — terminate session
-  if (req.method === "DELETE") {
-    const sessionId = req.headers.get("Mcp-Session-Id");
-    if (sessionId) sessions.delete(sessionId);
-    return new Response(null, { status: 200, headers: corsHeaders });
-  }
-
-  if (req.method !== "POST") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: { ...corsHeaders, Allow: "POST, DELETE, OPTIONS" },
-    });
-  }
+/** POST — JSON-RPC entry point. Most MCP method routing lives in here. */
+async function handleMcpPost(req: Request, _url: URL): Promise<Response> {
+  const corsHeaders = buildCorsHeaders(req);
 
   // --- POST — parse JSON-RPC ---
   let body: unknown;
@@ -456,7 +482,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // Session ID validation (required on all non-initialize requests)
   const incomingSessionId = req.headers.get("Mcp-Session-Id");
   if (rpcReq.method !== "initialize" && rpcReq.method !== "notifications/initialized") {
-    if (!incomingSessionId || !sessions.has(incomingSessionId)) {
+    if (!incomingSessionId || !(await (await kv).hasSession(incomingSessionId))) {
       // Clients without a session ID (other than on first init) must start over.
       return jsonResponse(
         rpcError(
@@ -499,6 +525,14 @@ async function handleRequest(req: Request): Promise<Response> {
         responseBody = await handleToolsCall(rpcReq, req);
         break;
 
+      case "resources/list":
+        responseBody = handleResourcesList(rpcReq);
+        break;
+
+      case "resources/read":
+        responseBody = handleResourcesRead(rpcReq);
+        break;
+
       default:
         responseBody = rpcError(
           rpcReq.id ?? null,
@@ -528,6 +562,87 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 
   return jsonResponse(responseBody, 200, responseHeaders);
+}
+
+// --- Routes table ---
+//
+// Tiny zero-dep router. Match precedence is in declaration order.
+//
+// Path matching rules per row:
+//   "*"             — wildcard (matches any path; used for OPTIONS preflight)
+//   "/exact/path"   — match if pathname === path OR pathname.endsWith(path)
+//                     (the endsWith form lets `/functions/v1/shadow-coach`
+//                      and a bare-domain mount both work)
+//
+// Method matching: rows with method "*" match any HTTP verb. Otherwise an
+// exact verb match is required.
+//
+// The catch-all rows at the bottom dispatch by method to the MCP POST/GET/DELETE
+// handlers; everything more specific (well-known docs) sits above them.
+
+interface Route {
+  method: string;
+  path: string;
+  handler: RouteHandler;
+}
+
+const ROUTES: Route[] = [
+  // Preflight first — must not be gated by origin or auth checks.
+  { method: "OPTIONS", path: "*", handler: handleCorsPreflight },
+
+  // Discovery — Protected Resource Metadata (RFC 9728).
+  {
+    method: "GET",
+    path: "/.well-known/oauth-protected-resource",
+    handler: handleProtectedResourceMetadata,
+  },
+
+  // MCP transport methods at the root path.
+  // Path "*" because Deno.serve gives us absolute paths and the function can
+  // be mounted under either `/` or `/functions/v1/shadow-coach`. Specific
+  // routes above this catch their own paths first.
+  { method: "GET", path: "*", handler: handleMcpGet },
+  { method: "DELETE", path: "*", handler: handleMcpDelete },
+  { method: "POST", path: "*", handler: handleMcpPost },
+];
+
+function matchRoute(method: string, pathname: string): RouteHandler | null {
+  for (const r of ROUTES) {
+    if (r.method !== method && r.method !== "*") continue;
+    if (r.path === "*" || pathname === r.path || pathname.endsWith(r.path)) {
+      return r.handler;
+    }
+  }
+  return null;
+}
+
+// --- Main request handler ---
+
+async function handleRequest(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const corsHeaders = buildCorsHeaders(req);
+
+  // Preflight goes through the routes table directly — no origin gating
+  // (browsers send the OPTIONS without credentials and validate CORS using
+  // the response headers, so we MUST respond before checking Origin).
+  if (req.method === "OPTIONS") {
+    return handleCorsPreflight(req, url);
+  }
+
+  // DNS rebinding protection (MCP spec security requirement)
+  if (!isOriginAllowed(req)) {
+    return jsonResponse({ error: "Origin not allowed" }, 403, corsHeaders);
+  }
+
+  const handler = matchRoute(req.method, url.pathname);
+  if (!handler) {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { ...corsHeaders, Allow: "POST, GET, DELETE, OPTIONS" },
+    });
+  }
+
+  return handler(req, url);
 }
 
 // --- Deno.serve entrypoint ---

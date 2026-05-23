@@ -1,0 +1,28 @@
+name: MCP contract drift check
+
+on:
+  pull_request:
+    paths:
+      - "mcp/**"
+      - "scripts/check-mcp-drift.ts"
+      - ".github/workflows/mcp-drift.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mcp/**"
+      - "scripts/check-mcp-drift.ts"
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v1
+        with:
+          deno-version: v2.x
+      - name: Run drift check
+        run: deno run --allow-read scripts/check-mcp-drift.ts
+      - name: Run edge-function tests
+        working-directory: mcp/edge-function
+        run: deno task test
+        continue-on-error: false

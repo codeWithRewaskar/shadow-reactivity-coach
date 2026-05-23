@@ -201,7 +201,7 @@ https://<project-ref>.supabase.co/auth/v1/oauth/authorize
   ?response_type=code
   &client_id=cpa_XXXXXXXXXXXXXXXX
   &redirect_uri=https%3A%2F%2Fclaude.ai%2Foauth%2Fcallback
-  &scope=openid%20profile%20email%20dogs%3Aread%20walks%3Awrite%20progress%3Aread%20coaching%3Aread
+  &scope=openid%20profile%20email%20profile%3Aread%20walks%3Awrite%20progress%3Aread%20protocols%3Aread
   &state=abc123def456...
   &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
   &code_challenge_method=S256

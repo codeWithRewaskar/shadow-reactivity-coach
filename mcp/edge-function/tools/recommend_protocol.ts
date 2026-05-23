@@ -8,13 +8,18 @@
  * guardrail (same as log_walk.ts).
  *
  * Protocol selection logic:
- *   1. Read the situation string to classify reactivity type.
- *   2. Apply the Three-Type Reactivity Framework from SKILL.md.
- *   3. Return a structured protocol with session plan, gear, and coaching note.
+ *   1. Aversive guardrail short-circuits before any DB call.
+ *   2. Fetch dog_profiles + dog_triggers via RLS-gated SELECT.
+ *   3. Optionally fetch last 14 days of walk_logs + walk_triggers (tolerant of
+ *      failure — proceeds with profile-only on error).
+ *   4. Classify reactivity type from situation + trigger evidence.
+ *   5. Build a protocol with the existing builders, personalised by dog name,
+ *      breed-appropriate equipment, and notes.
  */
 
 import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
+import { makeUserClient, type SupabaseClient } from "../db.ts";
 
 // --- Zod schema ---
 
@@ -56,6 +61,38 @@ export interface TrainingProtocol {
 export interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
   isError: boolean;
+}
+
+// --- Row shapes for fetched data ---
+
+interface DogTriggerRow {
+  trigger_type: string;
+  custom_label: string | null;
+  severity: number | null;
+  distance_threshold: number | null;
+}
+
+interface DogProfileRow {
+  id: string;
+  name: string;
+  breed: string | null;
+  notes: string | null;
+  dog_triggers: DogTriggerRow[] | null;
+}
+
+interface RecentWalkRow {
+  id: string;
+  date: string;
+  walk_triggers: Array<{ trigger_type: string; severity: number | null }>;
+}
+
+interface DogContext {
+  name: string;
+  breed: string;
+  notes: string;
+  triggers: DogTriggerRow[];
+  recentMaxSeverity: number; // 0 if no recent walks or fetch failed
+  hasRecentSetback: boolean; // recentMaxSeverity >= 4
 }
 
 // --- Force-free guardrail (same patterns as log_walk.ts) ---
@@ -103,8 +140,8 @@ function buildAversiveError(): ToolResult {
 }
 
 // --- Reactivity type classification ---
-// Simple keyword heuristic — good enough for a scaffold; a real version
-// would use a more sophisticated classifier or incorporate dog profile data.
+// Keyword heuristic over the situation string, with a small assist from any
+// observed triggers on the dog profile.
 
 type ReactivityType = "fear-based" | "frustration-based" | "excitement-based" | "mixed";
 
@@ -114,14 +151,22 @@ interface ClassificationResult {
   riskLevel: number;
 }
 
-function classifySituation(situation: string): ClassificationResult {
+function classifySituation(
+  situation: string,
+  dogCtx: DogContext | null
+): ClassificationResult {
   const s = situation.toLowerCase();
 
-  // Risk level detection
+  // Risk level detection — situation-driven, with recent-setback bump.
   let riskLevel = 2;
   if (/bite|bitten|bite\s*history|blood|severe|danger|unsafe/i.test(s)) riskLevel = 4;
   else if (/lun[gn]|frantic|out\s*of\s*control|can't\s*hold/i.test(s)) riskLevel = 3;
   else if (/whine|tension|stare|fixat/i.test(s)) riskLevel = 2;
+
+  if (dogCtx?.hasRecentSetback && riskLevel < 4) {
+    // Recent over-threshold episode in the last 14d nudges us toward extra caution.
+    riskLevel = Math.max(riskLevel, 3);
+  }
 
   // Trigger extraction (very simple — looks for common trigger words)
   const triggerMap: Array<[RegExp, string]> = [
@@ -138,6 +183,15 @@ function classifySituation(situation: string): ClassificationResult {
   let trigger = "unspecified triggers";
   for (const [re, label] of triggerMap) {
     if (re.test(s)) { trigger = label; break; }
+  }
+
+  // If no trigger word in the situation, fall back to the dog's top profile trigger.
+  if (trigger === "unspecified triggers" && dogCtx && dogCtx.triggers.length > 0) {
+    const sorted = [...dogCtx.triggers].sort(
+      (a, b) => (b.severity ?? 0) - (a.severity ?? 0)
+    );
+    const top = sorted[0];
+    trigger = top.custom_label && top.custom_label.length > 0 ? top.custom_label : top.trigger_type;
   }
 
   // Type classification based on body language cues
@@ -168,7 +222,49 @@ function classifySituation(situation: string): ClassificationResult {
   return { type, trigger, riskLevel };
 }
 
+// --- Breed-specific equipment helpers ---
+
+const PULLER_BREEDS = /labrador|lab\b|golden|retriever|malinois|husky|german\s*shepherd|gsd|pit|staffy|bully|bulldog|boxer|rottweiler|mastiff|cane corso|akita|doberman|pointer|setter|hound|beagle/i;
+const TINY_BREEDS = /chihuahua|yorkie|maltese|pomeranian|toy|miniature|papillon|pinscher|shih\s*tzu/i;
+
+function breedEquipmentNote(breed: string): string | null {
+  if (PULLER_BREEDS.test(breed)) {
+    return `Front-clip harness sized for ${breed} — these breeds pull, and a front-clip is the only safe way to redirect without throat pressure.`;
+  }
+  if (TINY_BREEDS.test(breed)) {
+    return `Small-dog Y-front harness — for ${breed}, a properly sized harness protects the trachea and gives you steering without lifting them off the ground.`;
+  }
+  return null;
+}
+
 // --- Protocol builders (one per reactivity type) ---
+
+function withDogContext(
+  protocol: TrainingProtocol,
+  dogCtx: DogContext | null
+): TrainingProtocol {
+  if (!dogCtx) return protocol;
+
+  // Personalise protocol_name with the dog's first name.
+  const personalised: TrainingProtocol = {
+    ...protocol,
+    protocol_name: `${dogCtx.name}'s ${protocol.protocol_name}`,
+  };
+
+  // Prepend breed-appropriate equipment if we recognise it.
+  const breedEq = breedEquipmentNote(dogCtx.breed);
+  if (breedEq) {
+    personalised.equipment = [breedEq, ...personalised.equipment];
+  }
+
+  // If the dog has profile notes mentioning specific treat preferences, reuse them.
+  const notes = dogCtx.notes.toLowerCase();
+  if (/cheese|chicken|liver|hot\s*dog|sardine/.test(notes)) {
+    personalised.treats_recommendation = `${personalised.treats_recommendation} (Owner notes mention specific high-value treats for ${dogCtx.name} — keep using what works.)`;
+  }
+
+  return personalised;
+}
 
 function buildFearProtocol(dog_id: string, trigger: string, riskLevel: number): TrainingProtocol {
   const riskNote = riskLevel >= 4
@@ -387,22 +483,214 @@ function buildMixedProtocol(dog_id: string, trigger: string, riskLevel: number):
   };
 }
 
+// --- Error mapping (mirrors log_walk / get_progress) ---
+
+function buildDbError(
+  err: { code?: string; message?: string; status?: number } | null,
+  dog_id: string
+): ToolResult {
+  console.error("[recommend_protocol] supabase error during dog profile fetch:", err);
+
+  const status = err?.status;
+  const code = err?.code;
+
+  const isRlsDenial =
+    status === 401 ||
+    status === 403 ||
+    status === 406 ||
+    code === "PGRST301" ||
+    code === "42501";
+
+  if (isRlsDenial) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            code: "permission_denied",
+            message: `You don't appear to own dog ${dog_id}. If this is your dog, re-authorise your Calming Paws connection and try again.`,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  if (code === "PGRST116" || code === "23503") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            code: "not_found",
+            message: `Dog ${dog_id} not found.`,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  if (status && status >= 500) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            code: "upstream_error",
+            message: "Calming Paws data plane is unavailable. Try again shortly.",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          code: "internal_error",
+          message: "Something went wrong building your protocol.",
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+function buildAuthRequiredError(): ToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          code: "auth_required",
+          message:
+            "🐾 This tool requires a Calming Paws account. Sign up to track your dog's walks, triggers, and progress over time.",
+          cta: "https://calming-paws.com/",
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+// --- Data fetch helpers ---
+
+async function fetchDogContext(
+  db: SupabaseClient,
+  dog_id: string
+): Promise<{ ctx?: DogContext; err?: ToolResult }> {
+  const { data, error } = await db
+    .from("dog_profiles")
+    .select(
+      "id, name, breed, notes, dog_triggers(trigger_type, custom_label, severity, distance_threshold)"
+    )
+    .eq("id", dog_id)
+    .single();
+
+  if (error) {
+    return {
+      err: buildDbError(
+        error as unknown as { code?: string; message?: string; status?: number },
+        dog_id
+      ),
+    };
+  }
+  if (!data) {
+    return { err: buildDbError({ code: "PGRST116" }, dog_id) };
+  }
+
+  const row = data as unknown as DogProfileRow;
+  return {
+    ctx: {
+      name: row.name,
+      breed: row.breed ?? "your dog's breed",
+      notes: row.notes ?? "",
+      triggers: row.dog_triggers ?? [],
+      recentMaxSeverity: 0, // filled in by fetchRecentSetback
+      hasRecentSetback: false,
+    },
+  };
+}
+
+/**
+ * Tolerant fetch of the last 14d of walks. On any failure, return zeros — we
+ * still want to build a protocol from profile data alone.
+ */
+async function fetchRecentSetback(
+  db: SupabaseClient,
+  dog_id: string
+): Promise<{ maxSeverity: number }> {
+  const since = new Date();
+  since.setUTCDate(since.getUTCDate() - 14);
+  const sinceIso = since.toISOString().split("T")[0];
+
+  try {
+    const { data, error } = await db
+      .from("walk_logs")
+      .select("id, date, walk_triggers(trigger_type, severity)")
+      .eq("dog_profile_id", dog_id)
+      .gte("date", sinceIso)
+      .limit(50);
+
+    if (error || !data) {
+      console.error("[recommend_protocol] recent-walks fetch soft-failed:", error);
+      return { maxSeverity: 0 };
+    }
+
+    const rows = data as unknown as RecentWalkRow[];
+    let maxSev = 0;
+    for (const r of rows) {
+      for (const t of r.walk_triggers ?? []) {
+        if (typeof t.severity === "number" && t.severity > maxSev) maxSev = t.severity;
+      }
+    }
+    return { maxSeverity: maxSev };
+  } catch (e) {
+    console.error("[recommend_protocol] recent-walks fetch threw:", e);
+    return { maxSeverity: 0 };
+  }
+}
+
 // --- Handler ---
 
+/**
+ * @param params  Validated tool params.
+ * @param ctx     Auth context — must carry bearer_token for the data-plane call.
+ * @param client  Optional injected Supabase client (used by tests). When omitted,
+ *                a per-request client is built from ctx.bearer_token.
+ */
 export async function recommendProtocol(
   params: RecommendProtocolParams,
-  ctx: AuthContext
+  ctx: AuthContext,
+  client?: SupabaseClient
 ): Promise<ToolResult> {
-  // Force-free guardrail
+  // 1) Force-free guardrail — never call the DB on aversive input.
   if (detectAversive(params.situation)) {
     return buildAversiveError();
   }
 
-  // TODO (production): Fetch actual dog profile from Supabase to personalise
-  // the protocol with breed-specific nuances and current threshold distance.
-  // For now we classify from the situation text alone.
+  // 2) Defensive auth check.
+  if (!ctx.bearer_token) {
+    return buildAuthRequiredError();
+  }
 
-  const { type, trigger, riskLevel } = classifySituation(params.situation);
+  const db = client ?? makeUserClient(ctx.bearer_token);
+
+  // 3) Fetch dog profile + triggers (RLS-gated).
+  const { ctx: dogCtx, err } = await fetchDogContext(db, params.dog_id);
+  if (err || !dogCtx) return err!;
+
+  // 4) Optionally fetch recent walks for setback detection — tolerant of failure.
+  const { maxSeverity } = await fetchRecentSetback(db, params.dog_id);
+  dogCtx.recentMaxSeverity = maxSeverity;
+  dogCtx.hasRecentSetback = maxSeverity >= 4;
+
+  // 5) Classify and build the protocol using the existing logic.
+  const { type, trigger, riskLevel } = classifySituation(params.situation, dogCtx);
 
   let protocol: TrainingProtocol;
   switch (type) {
@@ -417,6 +705,14 @@ export async function recommendProtocol(
       break;
     default:
       protocol = buildMixedProtocol(params.dog_id, trigger, riskLevel);
+  }
+
+  // 6) Personalise using real dog fields (breed-aware gear, name, notes).
+  protocol = withDogContext(protocol, dogCtx);
+
+  // If the dog has zero recorded triggers, acknowledge the data gap in the note.
+  if (dogCtx.triggers.length === 0) {
+    protocol.coaching_note = `🐾 I don't have trigger data for ${dogCtx.name} yet — this protocol is based on what you described in the situation. Logging a few walks will let me sharpen the recommendations next time. ` + protocol.coaching_note;
   }
 
   return {

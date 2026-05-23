@@ -12,10 +12,10 @@ This is the canonical, implementation-ready schema for every tool exposed by the
 | Tool | Auth | Scope | Subscription | Idempotent | Purpose |
 |------|------|-------|--------------|------------|---------|
 | `lookup_breed` | demo | — | free | yes | Teaser — breed profile from the 20-breed KB |
-| `get_dog_profile` | required | `dogs:read` | free | yes | Fetch stored dog profile |
+| `get_dog_profile` | required | `profile:read` | free | yes | Fetch stored dog profile |
 | `log_walk` | required | `walks:write` | free | no | Append walk session to history |
 | `get_progress` | required | `progress:read` | **pro** | yes | Trend analytics across a window |
-| `recommend_protocol` | required | `coaching:read` | **pro** | yes | Personalised training protocol |
+| `recommend_protocol` | required | `protocols:read` | **pro** | yes | Personalised training protocol |
 
 The `lookup_breed` tool is intentionally available to anonymous callers — it's the demo-mode conversion lever. Every other tool requires a valid bearer token.
 
@@ -149,7 +149,7 @@ The conversion lever. Returns a breed profile from Shadow's reactive-dog KB. The
 
 ## Tool: `get_dog_profile`
 
-**Auth:** required · **Scope:** `dogs:read` · **Tier:** free · **Idempotent:** yes · **Cacheable:** no (live data)
+**Auth:** required · **Scope:** `profile:read` · **Tier:** free · **Idempotent:** yes · **Cacheable:** no (live data)
 
 Returns the caller's stored profile for a specific dog. Used by Shadow to ground every subsequent suggestion in real dog data rather than generic breed advice.
 
@@ -438,7 +438,7 @@ Returns trend analytics over a window. The pro-tier gate is intentional — anal
 
 ## Tool: `recommend_protocol`
 
-**Auth:** required · **Scope:** `coaching:read` · **Tier:** **pro** · **Idempotent:** yes
+**Auth:** required · **Scope:** `protocols:read` · **Tier:** **pro** · **Idempotent:** yes
 
 The richest tool. Pulls the dog's profile + the breed KB and returns a personalised force-free training protocol with step-by-step session plans, equipment guidance, green/red flags, and a Shadow-voice coaching note. This is the tool that demonstrates why MCP matters: generic breed advice is free in the markdown; protocols *grounded in this dog's history* are not.
 

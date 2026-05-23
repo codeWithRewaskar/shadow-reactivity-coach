@@ -5,7 +5,7 @@
   "serverInfo": {
     "name": "shadow-coach",
     "displayName": "Shadow — Reactive Dog Training Coach",
-    "version": "2.1.2",
+    "version": "2.1.5",
     "description": "Force-free, evidence-based reactive dog coaching backed by live dog profiles, walk logs, and longitudinal progress analytics. Powered by Calming Paws.",
     "longDescription": "Shadow is the AI coaching brain behind Calming Paws. In demo mode it answers breed-specific reactivity questions across 20 breed profiles and a three-type reactivity framework (fear / frustration / excitement). Authenticated users unlock a persistent dog profile, walk logging, trigger tracking, and personalised training protocol recommendations grounded in real walk data.",
     "homepage": "https://calming-paws.com/",
@@ -57,7 +57,7 @@
 
   "capabilities": {
     "tools": true,
-    "resources": false,
+    "resources": true,
     "prompts": false,
     "sampling": false
   },

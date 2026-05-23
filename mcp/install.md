@@ -223,7 +223,7 @@ exponential backoff. If it consistently fails to connect after 30 seconds, check
 | Server name | `shadow-coach` |
 | MCP endpoint | `https://mcp.calming-paws.com/mcp` |
 | Server card | `https://mcp.calming-paws.com/.well-known/mcp/server-card.json` |
-| Transport | Streamable HTTP (MCP spec 2025-11-25) |
+| Transport | Streamable HTTP (MCP spec 2025-03-26; tracking 2025-11-25 RFC 9728/8707 adoption) |
 | Auth | OAuth 2.1 with PKCE |
 | Demo tool | `lookup_breed` |
 | Auth'd tools | `get_dog_profile`, `log_walk`, `get_progress`, `recommend_protocol` |

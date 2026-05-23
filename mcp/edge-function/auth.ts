@@ -28,6 +28,14 @@ export interface AuthContext {
   user_id?: string;
   /** Space-separated scopes extracted from the token. */
   scopes?: string[];
+  /**
+   * The raw bearer JWT from the Authorization header.
+   *
+   * Populated for `oauth` and `byojwt` kinds (so downstream tool handlers can
+   * forward it to Supabase / other data-plane calls, where it gates RLS by the
+   * calling user). Always `undefined` for `demo` kind.
+   */
+  bearer_token?: string;
 }
 
 export interface AuthError {
@@ -336,7 +344,12 @@ export async function resolveAuth(req: Request): Promise<AuthContext> {
     }
     const sub = (payload.sub as string | undefined) ?? "service";
     const scope = (payload.scope as string | undefined) ?? "shadow:all";
-    return { kind: "byojwt", user_id: sub, scopes: scope.split(" ") };
+    return {
+      kind: "byojwt",
+      user_id: sub,
+      scopes: scope.split(" "),
+      bearer_token: token,
+    };
   }
 
   // --- OAuth 2.1 path ---
@@ -383,7 +396,12 @@ export async function resolveAuth(req: Request): Promise<AuthContext> {
 
   const sub = (payload.sub as string | undefined) ?? "";
   const scope = (payload.scope as string | undefined) ?? "";
-  return { kind: "oauth", user_id: sub, scopes: scope.split(" ").filter(Boolean) };
+  return {
+    kind: "oauth",
+    user_id: sub,
+    scopes: scope.split(" ").filter(Boolean),
+    bearer_token: token,
+  };
 }
 
 /**

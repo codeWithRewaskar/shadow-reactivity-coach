@@ -1,5 +1,7 @@
 # Shadow — Reactive Dog Training Coach
 
+[![License: CC-BY-4.0](https://img.shields.io/badge/License-CC--BY--4.0-lightgrey)](LICENSE) [![Skill version](https://img.shields.io/badge/Skill-v2.1-blue)](CHANGELOG.md) [![MCP server](https://img.shields.io/badge/MCP_server-v2.1.5-blue)](mcp/) [![MCP spec](https://img.shields.io/badge/MCP%20spec-2025--03--26-green)](https://modelcontextprotocol.io/specification/2025-03-26) [![tests](https://img.shields.io/badge/tests-49%20passing-brightgreen)](mcp/edge-function/)
+
 Shadow is an AI-powered reactive dog training coach built on force-free, evidence-based methods. It provides personalised guidance grounded in a curated knowledge base of 26 training topics, 20 breed-specific reactivity profiles, and a three-type reactivity framework (fear / frustration / excitement).
 
 Shadow was created for [Calming Paws](https://github.com/codeWithRewaskar/calming-paws), a reactive dog training app, and is now available as a standalone skill for any LLM.

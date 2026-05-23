@@ -47,7 +47,8 @@ Both paths should return `Content-Type: application/json` with permissive CORS
 ### Transport field
 
 The spec uses `"streamable-http"` as the canonical transport name (matching the
-2025-11-25 MCP spec). Claude Code also accepts `"http"` as an alias.
+2025-03-26 MCP spec and forward-compatible with 2025-11-25). Claude Code also
+accepts `"http"` as an alias.
 
 ### Auth notes
 
