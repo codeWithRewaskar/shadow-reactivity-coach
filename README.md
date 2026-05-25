@@ -38,7 +38,8 @@ Shadow is a single Markdown file ([`SKILL.md`](SKILL.md)). Pick your LLM below a
 5. Start a new chat inside the Project — Shadow is now your reactive-dog coach
 
 ### ChatGPT 
-1. Explore Shadow here - https://chatgpt.com/g/g-6a10e840d2708191b532fabacd01e27f-shadow
+
+**Explore Shadow here - https://chatgpt.com/g/g-6a10e840d2708191b532fabacd01e27f-shadow**
 
 ### Cursor / Continue (IDE)
 
