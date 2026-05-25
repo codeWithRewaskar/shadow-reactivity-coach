@@ -1,5 +1,6 @@
 # Private launch / strategy docs — do not commit
 LAUNCH_PLAYBOOK.md
+launch/
 
 # OS
 .DS_Store
